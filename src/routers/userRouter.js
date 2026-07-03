@@ -1,5 +1,6 @@
 const express = require('express');
 const User = require('../models/user');
+const auth = require('../middleware/auth');
 
 const router = new express.Router();
 
@@ -7,7 +8,20 @@ router.post('/users', async (req, res) => {
   try {
     const user = new User(req.body);
     await user.save();
-    res.status(201).send(user);
+    const token = await user.generateAuthToken();
+    res.status(201).send({ user, token });
+  } catch (error) {
+    res.status(400).send(error);
+  }
+});
+
+router.post('/users/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    const user = await User.findByCredentials(email, password);
+    const token = await user.generateAuthToken();
+    res.send({ user, token });
+    res.send(user);
   } catch (error) {
     res.status(400).send(error);
   }
@@ -19,6 +33,23 @@ router.get('/users', async (req, res) => {
     res.send(users);
   } catch (error) {
     res.status(500).send(error);
+  }
+});
+
+router.get('/users/me', auth, async (req, res) => {
+  return res.send(req.user);
+});
+
+router.post('/users/logout', auth, async (req, res) => {
+  try {
+    req.user.tokens = req.user.tokens.filter((token) => {
+      return token.token !== req.token;
+    });
+    await req.user.save();
+
+    res.send();
+  } catch (error) {
+    res.status(500).send();
   }
 });
 
@@ -46,15 +77,16 @@ router.patch('/users/:id', async (req, res) => {
   if (!isValidOperation) {
     return res.status(400).send({ error: 'Invalid fields provided' });
   }
+
   try {
-    const user = await User.findByIdAndUpdate(req.params.id, req.body, {
-      new: true,
-      runValidators: true,
-    });
+    const user = await User.findById(req.params.id);
+    fields.forEach((field) => (user[field] = req.body[field]));
+    await user.save();
 
     if (!user) {
-      res.status(404).send();
+      return res.status(404).send({ error: 'User not found' });
     }
+
     res.send(user);
   } catch (error) {
     res.status(400).send(error);
